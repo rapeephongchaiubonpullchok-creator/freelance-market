@@ -1,0 +1,17 @@
+# ตรวจว่า Freelancer.com ตอบจาก GitHub Actions runner ไหม
+# สั่งรันเองเท่านั้น ไม่ผูกกับ push เพราะไม่มีเหตุให้ยิงเว็บข้างนอกทุกครั้งที่ commit
+name: probe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: IP ขาออกและตำแหน่งของ runner
+        run: curl -s --max-time 15 https://ipinfo.io/json || echo "ดู IP ไม่ได้"
+      - name: ยิงทดสอบ
+        run: python3 freelance-market/probe.py

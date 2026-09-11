@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""ที่เก็บของตัวเก็บ — ไฟล์ `.jsonl.gz` รายวันหกสาย บวกสถานะหนึ่งไฟล์
+
+ไฟล์รายวันถูกต่อท้ายระหว่างวัน แล้วไม่ถูกแตะอีกเลยเมื่อวันผ่านไป — ขนาด repo
+จึงเท่ากับขนาดข้อมูลพอดี ต่างจากไฟล์ที่ถูกเขียนทับทุกวันซึ่ง git จะเก็บสำเนาเต็มทุกเวอร์ชัน
+สถานะเป็นข้อยกเว้นเดียวที่ถูกเขียนทับ เพราะมันคือ "เรารู้อะไรอยู่ตอนนี้" ไม่ใช่ข้อมูลที่เก็บได้
+"""
+import gzip, json, os, time
+
+STREAMS = ("listings", "diffs", "bids", "outcomes", "pages", "runs")
+
+
+class StateMissing(Exception):
+    """ไฟล์สถานะหาย ทั้งที่สายข้อมูลมีร่องรอยว่าเคยเก็บที่นี่มาก่อน"""
+
+
+class Store:
+    def __init__(self, root):
+        self.root = os.path.abspath(root)
+        os.makedirs(self.root, exist_ok=True)
+        self._day = None
+        self._fh = {}
+
+    def _rotate(self, day):
+        for f in self._fh.values():
+            f.close()
+        self._fh = {}
+        self._day = day
+        os.makedirs(os.path.join(self.root, day), exist_ok=True)
+
+    def write(self, stream, row):
+        assert stream in STREAMS, stream
+        day = time.strftime("%Y-%m-%d", time.gmtime())
+        if day != self._day:
+            self._rotate(day)
+        f = self._fh.get(stream)
+        if f is None:
+            f = self._fh[stream] = gzip.open(
+                os.path.join(self.root, day, stream + ".jsonl.gz"), "at", encoding="utf-8")
+        row.setdefault("t", int(time.time()))
+        f.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+    def flush(self):
+        for f in self._fh.values():
+            f.flush()
+
+    def close(self):
+        for f in self._fh.values():
+            f.close()
+        self._fh = {}
+
+    # --- สถานะ ---
+
+    def state_path(self):
+        return os.path.join(self.root, "state.json.gz")
+
+    def has_rows(self):
+        """เคยเก็บลงที่เก็บนี้มาก่อนไหม — ไฟล์รายวันสายไหนก็นับ"""
+        for d in sorted(os.listdir(self.root)):
+            p = os.path.join(self.root, d)
+            if not os.path.isdir(p):
+                continue
+            for stream in STREAMS:
+                if os.path.exists(os.path.join(p, stream + ".jsonl.gz")):
+                    return True
+        return False
+
+    def load_state(self):
+        """สถานะหายพร้อมกับที่เก็บว่างเปล่า = เริ่มต้นใหม่ · หายทั้งที่มีข้อมูลอยู่ = ต้องรอคน
+
+        อย่างหลังคือทางเดียวที่ข้อมูลจะหายแบบไม่มีร่องรอย: ตัวเก็บจะนับ ID หนึ่งใหม่
+        ทิ้งงานที่ยังตามผลปลายทางค้างอยู่ทั้งกอง แล้วเดินต่อเหมือนไม่มีอะไรเกิดขึ้น
+        """
+        p = self.state_path()
+        if not os.path.exists(p):
+            if self.has_rows():
+                raise StateMissing(
+                    f"ไม่พบ {p} แต่ {self.root} มีไฟล์รายวันอยู่แล้ว — "
+                    "ถ้าเริ่มใหม่ตรงนี้ งานที่ติดตามค้างอยู่จะหายเงียบทั้งหมด "
+                    "ให้สร้างสถานะกลับจากสายข้อมูล หรือย้ายที่เก็บเดิมออกไปก่อนถ้าตั้งใจเริ่มใหม่จริง")
+            return {"version": 1, "max_id": 0, "tracked": {}, "done": {}, "absent": {}}
+        with gzip.open(p, "rt", encoding="utf-8") as f:
+            return json.load(f)
+
+    def save_state(self, state):
+        """เขียนลงไฟล์ชั่วคราวแล้วค่อยสลับชื่อ — ถูกฆ่ากลางคันแล้วสถานะเดิมต้องยังอ่านได้"""
+        p = self.state_path()
+        tmp = p + ".tmp"
+        with gzip.open(tmp, "wt", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, separators=(",", ":"))
+        os.replace(tmp, p)

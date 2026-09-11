@@ -1,0 +1,36 @@
+# แตะไฟล์บรรทัดเดียววันละครั้ง เพื่อให้ repo นี้ไม่ถูกนับว่านิ่ง
+#
+# GitHub ปิด workflow ที่ตั้งเวลาไว้เองเมื่อ repo ไม่มีความเคลื่อนไหว 60 วัน ตามแผนสอง repo
+# ทุก commit ของข้อมูลไปลงอีก repo หนึ่ง repo นี้จึงนิ่งสนิทและตัวเก็บจะหยุดเองเงียบ ๆ
+# ราวสองเดือนหลังเริ่ม ซึ่งเป็นช่องว่างชนิดที่จะถูกอ่านผิดเป็น "ตลาดเงียบ"
+#
+# แยกเป็นคนละ workflow กับตัวเก็บเพราะขั้นตอนนี้ต้องเขียน repo ได้ ส่วนตัวเก็บไม่ต้อง —
+# โทเคนอัตโนมัติของตัวเก็บจึงถูกกดให้เหลือแค่อ่านตามเดิม
+name: keepalive
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: keepalive
+  cancel-in-progress: false
+
+jobs:
+  touch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - run: |
+          git config user.name  "freelance-market keepalive"
+          git config user.email "keepalive@users.noreply.github.com"
+          date -u '+%Y-%m-%dT%H:%M:%SZ' > .github/heartbeat
+          git add .github/heartbeat
+          git diff --cached --quiet && { echo "ไม่มีอะไรเปลี่ยน"; exit 0; }
+          git commit -qm "keepalive $(date -u '+%Y-%m-%d')"
+          git push

@@ -1,0 +1,53 @@
+# ยิงต่อเนื่องยาว ๆ จาก runner แล้วดูว่าถูกจำกัดอัตราหรือถูกบล็อกไหม
+# ตัวเก็บจริงเป็นตัวสร้างภาระ เพราะส่วนผสมของรีเควสต์ต้องเหมือนของจริงถึงจะตอบได้
+# จังหวะช้าสองตัวตั้งได้ เพราะเพดาน job 6 ชม. ทำให้ของจริงเดินไม่ครบรอบ — บีบให้สั้นลง
+# แล้วทุกขาจะเดินหลายรอบในหน้าต่างเดียว แลกกับอัตรารีเควสต์ที่สูงกว่าของจริง
+# สั่งรันเองเท่านั้น และกินนาที Actions เท่ากับเวลาที่ตั้ง — อย่าตั้ง schedule
+name: soak
+
+on:
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: "ยิงต่อเนื่องกี่ชั่วโมง (5.75 = เท่า job จริง)"
+        default: "5.75"
+      tick:
+        description: "วินาทีต่อรอบ (120 = เท่าของจริง)"
+        default: "120"
+      slow:
+        description: "วินาทีต่อจังหวะช้า — ยิงงานเปิดค้าง กวาด ID ผลปลายทาง หน้าเว็บ (7200 = เท่าของจริง)"
+        default: "7200"
+      sweep:
+        description: "วินาทีต่อการกวาด 17 หมวด (21600 = เท่าของจริง)"
+        default: "21600"
+
+jobs:
+  soak:
+    runs-on: ubuntu-latest
+    # 6 ชม. คือเพดานของ job เผื่อขอบไว้ให้ขั้นตอนสรุปได้รันแม้ตัวเก็บเดินเต็มเวลา
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v5
+      - name: IP ขาออกและตำแหน่งของ runner
+        run: curl -s --max-time 15 https://ipinfo.io/json || echo "ดู IP ไม่ได้"
+      - name: เก็บจริงตามจังหวะที่ตั้ง
+        # ข้อมูลลง RUNNER_TEMP ไม่ใช่ในเช็คเอาต์ — ข้อมูลที่เก็บได้ห้ามเข้า repo นี้
+        run: |
+          python3 freelance-market/collect.py \
+            --data-dir "$RUNNER_TEMP/fmdata" \
+            --tick "${{ inputs.tick }}" \
+            --slow "${{ inputs.slow }}" \
+            --sweep "${{ inputs.sweep }}" \
+            --max-seconds "$(python3 -c "print(int(float('${{ inputs.hours }}') * 3600))")" \
+            --verbose
+      - name: สรุปว่าถูกกันไหม
+        if: always()
+        run: python3 freelance-market/soak_report.py --data-dir "$RUNNER_TEMP/fmdata"
+      - name: เก็บบันทึกการรันไว้ดูย้อนหลัง
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: soak-runs
+          # สาย runs เท่านั้น — มีแต่ตัวนับ ไม่มีข้อความที่ลูกค้าเขียน
+          path: ${{ runner.temp }}/fmdata/*/runs.jsonl.gz
+          if-no-files-found: error

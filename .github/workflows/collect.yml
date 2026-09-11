@@ -1,0 +1,66 @@
+# ตัวเก็บสด — job เดียววนลูปยาว 5 ชม. 45 นาที แล้วออกเอง โดยมี cron รายชั่วโมงเป็นยามปลุกต่อ
+#
+# ทำไมไม่ใช้ cron ตรง ๆ: `schedule:` ต่ำสุด 5 นาทีและถูกข้ามเมื่อระบบโหลดสูง ส่วนจังหวะที่ต้องการ
+# คือ 2 นาที จังหวะจึงต้องมาจากลูปข้างในโปรเซส ไม่ใช่จากตัวตั้งเวลาของ GitHub
+#
+# cron เป็นยาม ไม่ใช่คนขับ: รอบที่ยิงมาระหว่างที่ตัวเก็บยังวิ่งอยู่จะเข้าคิวแล้วเริ่มทันทีที่ตัวเดิมจบ
+# ต่อกันแทบไม่มีรอยต่อ ผลคือ cron ที่ถูกข้ามทำให้ขาดอย่างมากหนึ่งชั่วโมง และตัวเก็บที่ตายกลางทาง
+# ถูกปลุกใหม่เองภายในหนึ่งชั่วโมงแทนที่จะค้างถาวร
+name: collect
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+# ห้ามฆ่าตัวที่วิ่งอยู่ ให้ตัวใหม่รอคิวแทน — ถ้าตั้งเป็นฆ่า ยามจะกลายเป็นตัวฆ่าตัวเก็บทุกชั่วโมง
+# โดยที่อาการจะดูเหมือนทุกอย่างปกติ
+concurrency:
+  group: collect
+  cancel-in-progress: false
+
+permissions:
+  contents: read        # โทเคนอัตโนมัติไม่ต้องเขียนอะไร ข้อมูลไปที่อีก repo ด้วย PAT
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    # เพดานของ job คือ 6 ชม. ตัวเก็บออกเองที่ 5:45 เหลือขอบให้ขั้นตอนปิดท้ายได้ push ทัน
+    timeout-minutes: 355
+    env:
+      DATA_REPO: ${{ github.repository_owner }}/freelance-market-data
+      DATA: ${{ runner.temp }}/data
+      STATE: ${{ runner.temp }}/state
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: เตรียมที่เก็บข้อมูลและสถานะ
+        env:
+          GH_TOKEN: ${{ secrets.FM_DATA_TOKEN }}
+        run: ci/bootstrap.sh
+
+      - name: push ข้อมูลทุก 15 นาทีระหว่างที่ตัวเก็บวิ่ง
+        run: ci/push_loop.sh &
+
+      - name: เก็บ
+        run: |
+          python3 freelance-market/collect.py \
+            --data-dir "$DATA" \
+            --max-seconds 20700 \
+            --verbose
+
+      - name: push ข้อมูลรอบสุดท้ายและ commit สถานะ
+        if: always()
+        run: ci/finish.sh
+
+      - name: การ push ระหว่างทางเคยพังไหม
+        if: always()
+        # push ที่พังจะเงียบสนิทโดยธรรมชาติ ตัวเก็บยังวิ่งต่อได้ตามปกติ จึงต้องบังคับให้ job แดง
+        # เพื่อให้ GitHub ส่งเมลเอง — โทเคนหมดอายุถูกจับด้วยกลไกนี้ ไม่ใช่ด้วยการตั้งอายุยาว
+        run: |
+          if [ -f "$RUNNER_TEMP/push-failed" ]; then
+            echo "::error::push ระหว่างทางล้มเหลว — ดูรายละเอียดด้านล่าง"
+            cat "$RUNNER_TEMP/push-failed"
+            exit 1
+          fi
+          echo "push ระหว่างทางผ่านทุกรอบ"
