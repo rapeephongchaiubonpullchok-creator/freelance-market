@@ -26,7 +26,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read        # โทเคนอัตโนมัติไม่ต้องเขียนอะไร ข้อมูลไปที่อีก repo ด้วย PAT
+  contents: read        # โทเคนอัตโนมัติไม่ต้องเขียนอะไร ข้อมูลไปอีก repo ด้วย deploy key
 
 jobs:
   collect:
@@ -42,7 +42,7 @@ jobs:
 
       - name: เตรียมที่เก็บข้อมูลและสถานะ
         env:
-          GH_TOKEN: ${{ secrets.FM_DATA_TOKEN }}
+          FM_DATA_SSH_KEY: ${{ secrets.FM_DATA_SSH_KEY }}
         run: ci/bootstrap.sh
 
       - name: push ข้อมูลทุก 15 นาทีระหว่างที่ตัวเก็บวิ่ง
