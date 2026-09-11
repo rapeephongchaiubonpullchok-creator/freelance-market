@@ -34,9 +34,9 @@ jobs:
     # เพดานของ job คือ 6 ชม. ตัวเก็บออกเองที่ 5:45 เหลือขอบให้ขั้นตอนปิดท้ายได้ push ทัน
     timeout-minutes: 355
     env:
+      # ที่อยู่ของสองโคลนถูกประกาศลง $GITHUB_ENV ในขั้นเตรียม เพราะ runner.temp
+      # ใช้ในบล็อก env ระดับ job ไม่ได้
       DATA_REPO: ${{ github.repository_owner }}/freelance-market-data
-      DATA: ${{ runner.temp }}/data
-      STATE: ${{ runner.temp }}/state
     steps:
       - uses: actions/checkout@v5
 

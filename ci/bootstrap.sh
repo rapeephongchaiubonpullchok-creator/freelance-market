@@ -6,6 +6,11 @@
 # ที่ git หาส่วนต่างได้สวย ๆ อยู่แล้ว
 set -euo pipefail
 
+# runner.temp ใช้ในบล็อก env ระดับ job ไม่ได้ จึงตั้งที่นี่แล้วส่งต่อให้ขั้นตอนถัดไป
+DATA="${DATA:-$RUNNER_TEMP/data}"
+STATE="${STATE:-$RUNNER_TEMP/state}"
+{ echo "DATA=$DATA"; echo "STATE=$STATE"; } >> "$GITHUB_ENV"
+
 REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${DATA_REPO}.git"
 
 git config --global user.name  "freelance-market collector"
