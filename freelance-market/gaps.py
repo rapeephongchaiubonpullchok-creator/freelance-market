@@ -16,20 +16,14 @@
 
   python3 freelance-market/gaps.py --data-dir <โคลนของ repo ข้อมูล>
 """
-import argparse, glob, gzip, json, os, sys, time
+import argparse, os, sys, time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from store import read_stream      # noqa: E402
 
 HOUR = 3600
 
 
-def load(root):
-    rows = []
-    for p in sorted(glob.glob(os.path.join(root, "*", "runs.jsonl.gz"))):
-        with gzip.open(p, "rt", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    rows.append(json.loads(line))
-    return sorted(rows, key=lambda r: r.get("t", 0))
 
 
 def ts(t):
@@ -69,10 +63,14 @@ def main():
                     help="ความกว้างของหน้าต่างกวาด ID — ช่องว่างที่ยาวกว่านี้เสียตัวงานถาวร")
     o = ap.parse_args()
 
-    rows = load(o.data_dir)
+    damage = []
+    rows = read_stream(o.data_dir, "runs", damage)
     if not rows:
         print(f"ไม่พบสาย runs ใน {o.data_dir}")
         return 1
+
+    for d in damage:
+        print("  เตือน:", d, file=sys.stderr)
 
     t0, t1 = rows[0]["t"], rows[-1]["t"]
     span = max(t1 - t0, 1)

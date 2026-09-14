@@ -10,21 +10,17 @@
 
   python3 freelance-market/soak_report.py --data-dir $RUNNER_TEMP/fmdata
 """
-import argparse, glob, gzip, json, os, sys, time
+import argparse, os, sys, time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from store import read_stream      # noqa: E402
 
 BLOCKY = ("403", "429", "451")          # รหัสที่แปลว่าถูกกัน ไม่ใช่เว็บสะดุด
 HOUR = 3600
 
 
-def load_runs(root):
-    rows = []
-    for p in sorted(glob.glob(os.path.join(root, "*", "runs.jsonl.gz"))):
-        with gzip.open(p, "rt", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    rows.append(json.loads(line))
-    return sorted(rows, key=lambda r: r.get("t", 0))
+def load_runs(root, damage=None):
+    return read_stream(root, "runs", damage)
 
 
 def bucket(rows, t0):

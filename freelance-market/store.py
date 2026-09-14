@@ -5,9 +5,46 @@
 จึงเท่ากับขนาดข้อมูลพอดี ต่างจากไฟล์ที่ถูกเขียนทับทุกวันซึ่ง git จะเก็บสำเนาเต็มทุกเวอร์ชัน
 สถานะเป็นข้อยกเว้นเดียวที่ถูกเขียนทับ เพราะมันคือ "เรารู้อะไรอยู่ตอนนี้" ไม่ใช่ข้อมูลที่เก็บได้
 """
-import gzip, json, os, time
+import glob, gzip, json, os, time, zlib
 
 STREAMS = ("listings", "diffs", "bids", "outcomes", "pages", "runs")
+
+
+# --- ตัวอ่าน: ทุกตัวที่อ่านสายข้อมูลต้องผ่านสองฟังก์ชันนี้ ห้ามเปิด gzip เองที่อื่น ---
+#
+# ไฟล์ของ *วันปัจจุบัน* ไม่มีท้ายสตรีมเสมอ เพราะ `write()` ต่อท้ายแล้ว `flush()` ซึ่ง
+# sync-flush ให้อ่านได้ทุกไบต์ แต่ CRC กับขนาดถูกเขียนตอน `close()` เท่านั้น คือตอน job
+# หมดอายุหรือตอน `_rotate()` ข้ามเที่ยงคืน UTC ตัวอ่านจึงโยน `EOFError` หลังอ่านครบทุกแถว
+# แล้ว — ข้อมูลไม่ได้หายและไม่ได้เสีย การรันกับข้อมูลสดจึงเจอแบบนี้ *ทุกครั้ง* ไม่ใช่กรณีพิเศษ
+
+def read_rows(path, damage=None):
+    """อ่านทีละบรรทัด ทนไฟล์ที่ยังไม่ถูกปิดหรือถูกตัดกลางคัน คืนเท่าที่อ่านได้"""
+    rows = []
+    try:
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rows.append(json.loads(line))
+                except ValueError:
+                    if damage is not None:
+                        damage.append(f"{path}: บรรทัดเสีย 1 บรรทัด")
+    except (EOFError, OSError, zlib.error) as e:
+        if damage is not None:
+            damage.append(
+                f"{path}: อ่านไม่จบ ({type(e).__name__}) ใช้เท่าที่อ่านได้ {len(rows)} แถว")
+    return rows
+
+
+def read_stream(root, stream, damage=None):
+    """ทุกแถวของสายหนึ่งจากทุกวัน เรียงตามเวลา"""
+    assert stream in STREAMS, stream
+    rows = []
+    for p in sorted(glob.glob(os.path.join(root, "*", stream + ".jsonl.gz"))):
+        rows.extend(read_rows(p, damage))
+    return sorted(rows, key=lambda r: r.get("t", 0))
 
 
 class StateMissing(Exception):

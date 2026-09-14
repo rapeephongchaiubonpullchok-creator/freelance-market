@@ -17,29 +17,14 @@
   `seo`   ใช้ค่าจากตอนประกาศ ถ้าเว็บเปลี่ยน seo_url ทีหลัง การเปลี่ยนนั้นไม่ได้ถูกเก็บลงสายไหนเลย
   จังหวะช้า  `next_slow`/`next_sweep` ตั้งเป็น 0 คือให้เดินขาแพงทันทีที่เริ่ม ซึ่งถูกต้องหลังจากที่ขาดหายไป
 """
-import argparse, gzip, json, os, sys, time, zlib
+import argparse, gzip, json, os, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from store import Store, STREAMS      # noqa: E402
+from store import Store, STREAMS, read_rows      # noqa: E402
 
 DAY = 86400
 # ลำดับภายในวินาทีเดียวกัน: ประกาศต้องมาก่อนส่วนต่างของมันเสมอ ส่วนบันทึกการรันปิดท้าย
 RANK = {"listings": 0, "diffs": 1, "bids": 2, "pages": 3, "outcomes": 4, "runs": 5}
-
-
-def read_rows(path, damage):
-    """อ่านทีละบรรทัด ทนไฟล์ที่ถูกตัดกลางคัน — job ที่ถูกฆ่าทิ้งท้ายไฟล์ไม่ครบไว้ได้"""
-    rows = []
-    try:
-        with gzip.open(path, "rt", encoding="utf-8") as f:
-            for line in f:
-                try:
-                    rows.append(json.loads(line))
-                except ValueError:
-                    damage.append(f"{path}: บรรทัดเสีย 1 บรรทัด")
-    except (EOFError, OSError, zlib.error) as e:
-        damage.append(f"{path}: อ่านไม่จบ ({type(e).__name__}) ใช้เท่าที่อ่านได้ {len(rows)} แถว")
-    return rows
 
 
 def load_all(root):

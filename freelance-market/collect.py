@@ -369,25 +369,29 @@ class Collector:
         return run
 
     def loop(self):
-        t_end = time.time() + self.o.max_seconds if self.o.max_seconds else None
-        i = 0
-        while not self.stop:
-            i += 1
-            r = self.tick(i)
-            print(f"[{time.strftime('%H:%M:%S')}] รอบ {i} {r['secs']}s "
-                  f"ยิง {r['net']['requests']} ประกาศใหม่ {r['listings']} ส่วนต่าง {r['diffs']} "
-                  f"บิด {r['bids']} ปลายทาง {r['outcomes']} หน้าเว็บ {r['pages']} "
-                  f"ติดตาม {r['tracked_open']}/{r['tracked']}"
-                  + (f" [{r['error']}]" if r.get("error") else "")
-                  + (f" [ถูกบล็อก {r['blocked']}]" if r.get("blocked") else ""), flush=True)
-            if self.o.once:
-                break
-            if r.get("blocked"):
-                time.sleep(600)
-            if t_end and time.time() >= t_end:
-                break
-            time.sleep(max(0, self.o.tick - r["secs"]))
-        self.store.close()
+        # ปิดที่เก็บให้ได้ทุกทางออก — ก้อน gzip ที่ไม่ถูกปิดจะไม่มีท้ายสตรีมถาวร
+        # ไม่ใช่แค่ชั่วคราวจนถึงรอบหน้า เพราะไฟล์วันนั้นจะไม่ถูกเปิดต่อท้ายอีกแล้ว
+        try:
+            t_end = time.time() + self.o.max_seconds if self.o.max_seconds else None
+            i = 0
+            while not self.stop:
+                i += 1
+                r = self.tick(i)
+                print(f"[{time.strftime('%H:%M:%S')}] รอบ {i} {r['secs']}s "
+                      f"ยิง {r['net']['requests']} ประกาศใหม่ {r['listings']} ส่วนต่าง {r['diffs']} "
+                      f"บิด {r['bids']} ปลายทาง {r['outcomes']} หน้าเว็บ {r['pages']} "
+                      f"ติดตาม {r['tracked_open']}/{r['tracked']}"
+                      + (f" [{r['error']}]" if r.get("error") else "")
+                      + (f" [ถูกบล็อก {r['blocked']}]" if r.get("blocked") else ""), flush=True)
+                if self.o.once:
+                    break
+                if r.get("blocked"):
+                    time.sleep(600)
+                if t_end and time.time() >= t_end:
+                    break
+                time.sleep(max(0, self.o.tick - r["secs"]))
+        finally:
+            self.store.close()
 
 
 def main():
