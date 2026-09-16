@@ -404,7 +404,10 @@ def main():
     ap.add_argument("--sweep", type=float, default=6 * HOUR, help="จังหวะกวาดทีละหมวด")
     ap.add_argument("--fresh-hours", type=float, default=6, help="นิยามของ 'งานอายุน้อย'")
     ap.add_argument("--id-back", type=int, default=600, help="จำนวน ID ที่ถอยกลับทุกครั้งที่กวาด")
-    ap.add_argument("--pages-per-cycle", type=int, default=40)
+    # 140 ต่อรอบหนัก 12 รอบ = 1,680 หน้า/วัน สูงกว่าอัตราที่งานปิดจริง (1,048-1,488/วัน
+    # วัดจากข้อมูลสด 09-11 ถึง 09-15) คิวที่ค้างอยู่จึงลดลง ไม่ใช่แค่หยุดโต ซึ่งจำเป็น
+    # เพราะงานที่ปิดแล้วถูกเอาออกจากรายการติดตาม 7 วันหลังปิด ไม่ว่าหน้าเว็บจะถูกดึงหรือยัง
+    ap.add_argument("--pages-per-cycle", type=int, default=140)
     ap.add_argument("--min-interval", type=float, default=0.4, help="วินาทีขั้นต่ำระหว่างรีเควสต์")
     ap.add_argument("--max-seconds", type=float, default=0, help="อายุของ job (0 = ไม่จำกัด)")
     ap.add_argument("--once", action="store_true", help="รันรอบเดียวแล้วออก ใช้ตอนทดสอบ")
