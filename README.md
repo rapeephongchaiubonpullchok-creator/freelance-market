@@ -21,6 +21,7 @@ repo นี้มีแต่โค้ด ข้อมูลถูกเขี�
 | `freelance-market/rebuild_state.py` | กู้ไฟล์สถานะกลับจากสายข้อมูล เมื่อมันหาย |
 | `freelance-market/probe.py` | ตรวจว่าสภาพแวดล้อมที่รันอยู่ยิงเว็บได้ไหม อ่านอย่างเดียว |
 | `freelance-market/soak_report.py` | อ่านสาย runs แล้วตอบว่าถูกจำกัดอัตราหรือถูกหน่วงไหม |
+| `grading/` | ขาตัดเกรด — คนละโปรแกรมกับตัวเก็บ รันที่เครื่องบ้าน ดู [`grading/README.md`](grading/README.md) |
 
 ## ความลับที่ workflow ต้องใช้
 
