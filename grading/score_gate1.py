@@ -44,8 +44,12 @@ def main():
     revs = {r["ladder_rev"] for r in rows}
     readers = {r["reader"] for r in rows}
     print(f"ไม้บรรทัด rev {', '.join(sorted(revs))} · ตัวอ่าน {', '.join(sorted(readers))}")
-    if len(revs) > 1 or len(readers) > 1:
-        sys.exit("ผลนี้ปนหลายไม้บรรทัดหรือหลายตัวอ่าน ด่านหนึ่งเทียบแบบนี้ไม่ได้")
+    temps = {str(r.get("temperature", "—")) for r in rows}
+    apis = {str(r.get("api", "—")) for r in rows}
+    if apis != {"—"} or temps != {"—"}:
+        print(f"ยิงผ่าน {', '.join(sorted(apis))} · อุณหภูมิ {', '.join(sorted(temps))}")
+    if len(revs) > 1 or len(readers) > 1 or len(temps) > 1 or len(apis) > 1:
+        sys.exit("ผลนี้ปนหลายไม้บรรทัด ตัวอ่าน รูปแบบ API หรืออุณหภูมิ ด่านหนึ่งเทียบแบบนี้ไม่ได้")
 
     by_round = collections.Counter(r["round"] for r in rows)
     print(f"\n## ความครบ  ชุดละ {size} ชิ้น {len(by_round)} รอบ")

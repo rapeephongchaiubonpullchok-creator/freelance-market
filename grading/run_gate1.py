@@ -118,9 +118,14 @@ def main():
         open(os.path.join(raw_dir, f"round{r}.txt"), "w", encoding="utf-8").write(p.stdout)
         if p.returncode != 0:
             sys.exit(f"รอบ {r}: ตัวอ่านออกด้วยรหัส {p.returncode}\n{p.stderr[:2000]}")
-        text = p.stdout
-        try:                                   # --output-format json ห่อคำตอบไว้ในฟิลด์ result
-            text = json.loads(p.stdout).get("result", p.stdout)
+        # ตัวอ่านทั้งสองแบบห่อคำตอบไว้ในฟิลด์ result เหมือนกัน ตัวที่ยิง HTTP เองแนบ
+        # รูปแบบ API กับอุณหภูมิที่ใช้มาด้วย ซึ่งต้องติดไปกับทุกแถว ไม่งั้นผลของสองรอบ
+        # ที่ยิงคนละอุณหภูมิจะถูกเอามาเทียบกันโดยไม่มีอะไรฟ้อง
+        text, extra = p.stdout, {}
+        try:
+            payload = json.loads(p.stdout)
+            text = payload.get("result", p.stdout)
+            extra = {k: payload[k] for k in ("api", "temperature") if k in payload}
         except ValueError:
             pass
         got = parse(text, size)
@@ -128,7 +133,7 @@ def main():
         pos = {items[i]["n"]: idx + 1 for idx, i in enumerate(order)}
         for n, v in got.items():
             rows.append({"round": r, "n": n, "pos": pos[n], "k": v["k"], "d": v["d"],
-                         "ladder_rev": rev, "reader": a.reader_id})
+                         "ladder_rev": rev, "reader": a.reader_id, **extra})
         print(f"รอบ {r}: ตอบมา {len(got)}/{size} ชิ้น ใช้เวลา {dt/60:.1f} นาที")
 
     with open(os.path.join(a.out, "gate1_grades.jsonl"), "w", encoding="utf-8") as f:
