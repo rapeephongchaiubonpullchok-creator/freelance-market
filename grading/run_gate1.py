@@ -10,7 +10,9 @@
 ซ้ำ ๆ แล้วนับเป็นผ่าน รอบแรกใช้ลำดับเดิมไว้เทียบ อีกสี่รอบสลับด้วย seed ที่บันทึกไว้
 
 ตัวอ่านเป็น Claude Code ทั้งตัว ไม่ใช่ API — เรียกทีละงานไม่ได้ ค่าโสหุ้ยของการปลุกเอเจนต์
-กินทุกอย่าง ทั้งชุดจึงถูกยัดไปในการเรียกครั้งเดียวต่อหนึ่งรอบ
+กินทุกอย่าง ทั้งชุดจึงถูกยัดไปในการเรียกครั้งเดียวต่อหนึ่งรอบ ตัวอ่านที่ใช้จริงถูกบันทึกลงทุกแถว
+ทั้งชื่อรุ่นและคำสั่งที่เรียก เพราะโมเดลตัวเดียวกันที่ถูก harness ห่อกับที่ยิงตรงเข้า API
+ไม่ใช่ผู้อ่านคนเดียวกัน และผลของสองแบบนั้นเอามาเทียบกันไม่ได้
 
   python3 grading/run_gate1.py --out grading/out --ladder grading/ladders/graphic-design.md
   python3 grading/run_gate1.py --out grading/out --dry-run > /tmp/prompt.txt   # ดูพรอมป์ก่อนยิง
@@ -133,7 +135,8 @@ def main():
         pos = {items[i]["n"]: idx + 1 for idx, i in enumerate(order)}
         for n, v in got.items():
             rows.append({"round": r, "n": n, "pos": pos[n], "k": v["k"], "d": v["d"],
-                         "ladder_rev": rev, "reader": a.reader_id, **extra})
+                         "ladder_rev": rev, "reader": a.reader_id,
+                         "reader_cmd": a.reader, **extra})
         print(f"รอบ {r}: ตอบมา {len(got)}/{size} ชิ้น ใช้เวลา {dt/60:.1f} นาที")
 
     with open(os.path.join(a.out, "gate1_grades.jsonl"), "w", encoding="utf-8") as f:

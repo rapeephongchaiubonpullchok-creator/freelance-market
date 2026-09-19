@@ -34,6 +34,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--pass-share", type=float, default=0.80)
+    ap.add_argument("--tail-margin", type=float, default=0.10,
+                    help="ส่วนต่างที่ยอมให้ท้ายชุดแย่กว่าต้นชุดได้")
     a = ap.parse_args()
 
     path = os.path.join(a.out, "gate1_grades.jsonl")
@@ -97,6 +99,7 @@ def main():
 
     print("\n## ตำแหน่งในชุด — งานท้ายชุดถูกตัดสินหยาบกว่าไหม")
     third = max(1, size // 3)
+    tail_bias = {}
     for ax, label in AXES:
         buckets = collections.defaultdict(lambda: [0, 0])
         for r in rows:
@@ -106,11 +109,19 @@ def main():
             buckets[b][1] += 1
             if r[ax] != m:
                 buckets[b][0] += 1
-        parts = []
+        parts, rate = [], {}
         for b in ("ต้นชุด", "กลางชุด", "ท้ายชุด"):
             bad, tot = buckets[b]
-            parts.append(f"{b} {bad/tot:.0%}" if tot else f"{b} —")
+            rate[b] = bad / tot if tot else 0.0
+            parts.append(f"{b} {rate[b]:.0%}" if tot else f"{b} —")
         print(f"  {label}: คำตอบที่ต่างจากค่าที่ตอบบ่อยสุดของชิ้นนั้น · " + "  ".join(parts))
+        # ความเอียงตามตำแหน่งทำให้ตัวเลขความนิ่งโกหกได้ — งานท้ายชุดที่ถูกตัดสินหยาบ
+        # จะได้คำตอบผิดแบบเดิมซ้ำ ๆ แล้วนับเป็นนิ่ง เกณฑ์นี้ (ท้ายชุดแย่กว่าต้นชุดเกิน
+        # 10 จุด และแย่กว่าอย่างน้อยเท่าตัว) เป็นค่าที่ตั้งเอง ปรับได้ด้วย --tail-margin
+        tail_bias[ax] = (rate["ท้ายชุด"] - rate["ต้นชุด"] >= a.tail_margin
+                         and rate["ท้ายชุด"] >= 2 * max(rate["ต้นชุด"], 0.01))
+        if tail_bias[ax]:
+            print(f"    ↑ ท้ายชุดหยาบกว่าต้นชุดชัดเจน — ตัวเลขความนิ่งด้านบนสูงเกินจริง")
 
     print("\n## ตกขอบ")
     for ax, label in AXES:
@@ -118,13 +129,22 @@ def main():
         tot = sum(c.values())
         print(f"  {label}: " + "  ".join(f"{k}={c[k]} ({c[k]/tot:.0%})" for k in sorted(c, key=str)))
 
-    ok = all(v >= a.pass_share for v in verdicts.values()) and holes == 0
+    ok = (all(v >= a.pass_share for v in verdicts.values())
+          and holes == 0 and not any(tail_bias.values()))
     print("\n## ผล")
     if ok:
-        print(f"  ผ่าน — ทั้งสองแกนนิ่งเกิน {a.pass_share:.0%} และตัวอ่านตอบครบทุกรอบ")
+        print(f"  ผ่าน — ทั้งสองแกนนิ่งเกิน {a.pass_share:.0%} ตัวอ่านตอบครบทุกรอบ และไม่มีความเอียงตามตำแหน่ง")
         print("  ขั้นต่อไปคือตัดรายชื่อวิชาชีพจากการนับแท็กที่อยู่ด้วยกันในงานจริง")
     else:
-        print(f"  ไม่ผ่าน — ต้องลดขนาดชุดหรือซอยคำถามให้ปิดขึ้น **ห้ามปรับบันไดเพราะผลด่านนี้**")
+        why = []
+        if holes:
+            why.append("ตอบไม่ครบ")
+        if any(v < a.pass_share for v in verdicts.values()):
+            why.append("ความนิ่งต่ำกว่าเกณฑ์")
+        if any(tail_bias.values()):
+            why.append("ท้ายชุดถูกตัดสินหยาบกว่าต้นชุด")
+        print(f"  ไม่ผ่าน ({' · '.join(why)}) — ต้องลดขนาดชุดหรือซอยคำถามให้ปิดขึ้น "
+              f"**ห้ามปรับบันไดเพราะผลด่านนี้**")
         print("  บันไดจะถูกแก้ด้วยผลของด่านสองและด่านสามเท่านั้น")
     sys.exit(0 if ok else 1)
 
