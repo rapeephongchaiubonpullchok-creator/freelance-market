@@ -97,15 +97,21 @@ def main():
             if len(unstable) > 15:
                 print(f"    ... อีก {len(unstable)-15} ชิ้น")
 
-    print("\n## ตำแหน่งในชุด — งานท้ายชุดถูกตัดสินหยาบกว่าไหม")
-    third = max(1, size // 3)
+    print("\n## ตำแหน่งในชุดย่อย — งานท้ายชุดถูกตัดสินหยาบกว่าไหม")
+    # ตำแหน่งที่มีความหมายคือตำแหน่งใน **ชุดย่อยที่ถูกยิงจริง** ไม่ใช่ในชุด 50 ทั้งก้อน
+    # เพราะตัวอ่านเห็นทีละชุดย่อย ความเอียงตามตำแหน่งจึงเกิดภายในชุดย่อยเท่านั้น
+    csizes = {r.get("chunk_size", size) for r in rows}
+    if len(csizes) > 1:
+        sys.exit(f"ผลนี้ปนหลายขนาดชุดย่อย {sorted(csizes)} — ความเอียงตามตำแหน่งเทียบข้ามขนาดไม่ได้")
+    csize = csizes.pop()
+    third = max(1, csize // 3)
     tail_bias = {}
     for ax, label in AXES:
         buckets = collections.defaultdict(lambda: [0, 0])
         for r in rows:
             vals = list(ans[ax].get(r["n"], {}).values())
             m, _ = mode(vals)
-            b = "ต้นชุด" if r["pos"] <= third else ("ท้ายชุด" if r["pos"] > size - third else "กลางชุด")
+            b = "ต้นชุด" if r["pos"] <= third else ("ท้ายชุด" if r["pos"] > csize - third else "กลางชุด")
             buckets[b][1] += 1
             if r[ax] != m:
                 buckets[b][0] += 1

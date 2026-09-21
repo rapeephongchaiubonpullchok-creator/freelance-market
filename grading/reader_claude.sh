@@ -37,9 +37,30 @@ export CLAUDE_CODE_MAX_CONTEXT_TOKENS="${FM_CLAUDE_CONTEXT:-128000}"
 
 # งานนี้เป็นการอ่านแล้วตอบล้วน ๆ ไม่มีเหตุให้แตะเครื่องมือสักตัว ปิดไว้ทั้งหมดเพื่อไม่ให้
 # มันไปค้างรอขออนุมัติกลางชุด และไม่ให้ MCP ของเครื่องนี้หลุดเข้าไปในบริบทของมัน
-exec claude \
+# **ต้องยิงแบบสตรีมเท่านั้น** วัดแล้ว 2026-09-21: ตัวกลางหน้าเกตเวย์ตัดสายที่ไม่มีอะไรวิ่ง
+# ทิ้งด้วยรหัส 524 และเพดานนั้นต่ำถึง 125 วินาทีตอนเครื่องหลังบ้านยุ่ง ซึ่งสั้นกว่าเวลาที่
+# งานชิ้นเดียวใช้ (586 วินาทีในการวัดเดียวกัน) แบบสตรีมมีไบต์วิ่งตลอดจึงไม่ถูกตัด — วิ่งผ่าน
+# 30 นาทีได้โดยไม่มีอะไรมาตัด ส่วน stdout ที่ออกจากตัวนี้ยังเป็น JSON ก้อนเดียวเหมือนเดิม
+# เพราะแถวสุดท้ายของสตรีมคือแถว result ที่ `run_gate1.py` อ่านอยู่แล้ว
+claude \
   --model "$FM_CLAUDE_MODEL" \
   --disallowedTools Bash Read Edit Write Glob Grep WebFetch WebSearch Task NotebookEdit \
   --strict-mcp-config \
   --no-session-persistence \
-  -p --output-format json
+  -p --output-format stream-json --include-partial-messages --verbose \
+  | python3 -c '
+import json, sys
+last = None
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        ev = json.loads(line)
+    except ValueError:
+        continue
+    if ev.get("type") == "result":
+        last = ev
+print(json.dumps(last or {"result": "", "note": "สตรีมจบโดยไม่มีแถว result"}, ensure_ascii=False))
+'
+exit "${PIPESTATUS[0]}"
