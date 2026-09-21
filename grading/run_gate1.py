@@ -95,6 +95,8 @@ def main():
     ap.add_argument("--reader-id", default="qwen3.6-35b-a3b",
                     help="ชื่อรุ่นที่จะบันทึกลงทุกแถว")
     ap.add_argument("--order-seed", type=int, default=20260918)
+    ap.add_argument("--resume", action="store_true",
+                    help="ข้ามรอบที่มีผลอยู่แล้วในไฟล์ผล ใช้เมื่อรันครั้งก่อนถูกตัดกลางคัน")
     ap.add_argument("--dry-run", action="store_true", help="พิมพ์พรอมป์รอบแรกแล้วออก ไม่ยิงตัวอ่าน")
     a = ap.parse_args()
 
@@ -108,10 +110,24 @@ def main():
         return
 
     cmd = shlex.split(a.reader) + ["-p", "--output-format", "json"]
-    rows, raw_dir = [], os.path.join(a.out, "raw")
+    raw_dir = os.path.join(a.out, "raw")
     os.makedirs(raw_dir, exist_ok=True)
+    grades = os.path.join(a.out, "gate1_grades.jsonl")
+
+    # แต่ละรอบใช้เวลาหลายนาที และเครื่องที่รันอาจถูกปิดกลางคัน ผลของรอบที่เดินจบแล้ว
+    # จึงต้องถูกเขียนลงดิสก์ทันที ไม่ใช่ค้างในหน่วยความจำจนจบทั้งห้ารอบ --resume
+    # อ่านว่ารอบไหนมีผลอยู่แล้วแล้วข้ามไป ทำให้การรันต่อจากที่ค้างไม่ต้องยิงซ้ำ
+    done = set()
+    if a.resume and os.path.exists(grades):
+        with open(grades, encoding="utf-8") as f:
+            done = {json.loads(l)["round"] for l in f if l.strip()}
+        print(f"มีผลอยู่แล้วของรอบ {sorted(done)} จะข้ามไป")
+    else:
+        open(grades, "w").close()
 
     for r, order in enumerate(orders(size, a.order_seed), start=1):
+        if r in done:
+            continue
         shown = [items[i] for i in order]
         prompt = build_prompt(ladder, shown)
         t0 = time.time()
@@ -133,16 +149,14 @@ def main():
         got = parse(text, size)
         # ตำแหน่งที่งานชิ้นนั้น *ถูกเห็น* ในรอบนี้ คือสิ่งที่ต้องบันทึก ไม่ใช่ลำดับในไฟล์ชุด
         pos = {items[i]["n"]: idx + 1 for idx, i in enumerate(order)}
-        for n, v in got.items():
-            rows.append({"round": r, "n": n, "pos": pos[n], "k": v["k"], "d": v["d"],
-                         "ladder_rev": rev, "reader": a.reader_id,
-                         "reader_cmd": a.reader, **extra})
-        print(f"รอบ {r}: ตอบมา {len(got)}/{size} ชิ้น ใช้เวลา {dt/60:.1f} นาที")
+        with open(grades, "a", encoding="utf-8") as f:
+            for n, v in sorted(got.items()):
+                f.write(json.dumps({"round": r, "n": n, "pos": pos[n], "k": v["k"], "d": v["d"],
+                                    "ladder_rev": rev, "reader": a.reader_id,
+                                    "reader_cmd": a.reader, **extra}, ensure_ascii=False) + "\n")
+        print(f"รอบ {r}: ตอบมา {len(got)}/{size} ชิ้น ใช้เวลา {dt/60:.1f} นาที", flush=True)
 
-    with open(os.path.join(a.out, "gate1_grades.jsonl"), "w", encoding="utf-8") as f:
-        for row in rows:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
-    print(f"เขียนแล้ว {a.out}/gate1_grades.jsonl · ไม้บรรทัด rev {rev} · ตัวอ่าน {a.reader_id}")
+    print(f"เขียนแล้ว {grades} · ไม้บรรทัด rev {rev} · ตัวอ่าน {a.reader_id}")
     print(f"ต่อด้วย: python3 grading/score_gate1.py --out {a.out}")
 
 
