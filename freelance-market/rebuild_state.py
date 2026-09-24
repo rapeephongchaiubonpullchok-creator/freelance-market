@@ -66,6 +66,7 @@ def rebuild(root, now=None):
             tracked[pid] = {"t": p.get("time_submitted") or t,
                             "n": bs.get("bid_count") or 0, "avg": bs.get("bid_avg"),
                             "seo": p.get("seo_url"), "st": p.get("status"),
+                            "hire": 1 if p.get("hireme") else 0,
                             "closed": 0, "page": 0, "due": [], "miss": 0}
 
         elif stream == "diffs":

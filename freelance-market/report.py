@@ -446,6 +446,13 @@ def main():
     outcomes = build_outcomes(read_stream(o.data_dir, "outcomes", damage))
     pages = read_stream(o.data_dir, "pages", damage)
 
+    # งาน hireme ยื่นให้คนเดียวโดยตรง มีบิดเดียวโดยโครงสร้าง ไม่ใช่ตลาดแข่งขัน
+    # ถ้าปนเข้ามาจะดึงความแออัดลง และหน้าของมันไม่มีรายการบิดให้แกะ
+    hire = {r.get("id") for r in listings if (r.get("p") or {}).get("hireme")}
+    listings = [r for r in listings if r.get("id") not in hire]
+    pages = [r for r in pages if r.get("id") not in hire]
+    print(f"ตัดงาน hireme ออก {len(hire):,} งาน — ไม่ใช่ตลาดแข่งขัน")
+
     jobs = build_jobs(listings, diffs)
     t0, t1 = runs[0]["t"], runs[-1]["t"]
 

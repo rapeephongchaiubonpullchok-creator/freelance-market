@@ -71,6 +71,7 @@ class Collector:
                     "t": p.get("time_submitted") or now(),
                     "n": bs.get("bid_count") or 0, "avg": bs.get("bid_avg"),
                     "seo": p.get("seo_url"), "st": p.get("status"),
+                    "hire": 1 if p.get("hireme") else 0,
                     "closed": 0, "page": 0, "due": [], "miss": 0}
                 if p.get("status") != "active":
                     self.close(pid, p, run)
@@ -107,6 +108,8 @@ class Collector:
             e["n"], e["avg"] = n2, avg2
         if p.get("seo_url"):
             e["seo"] = p["seo_url"]
+        if p.get("hireme"):
+            e["hire"] = 1        # งานที่เข้ารายการก่อนมีฟิลด์นี้ได้ป้ายจากการยิงถามรอบถัดไป
         if p.get("status") != "active" and not e["closed"]:
             self.close(pid, p, run)
 
@@ -264,9 +267,14 @@ class Collector:
             self.users.update(self.net.user_ids(need))
 
     def fetch_pages(self, run):
-        """ดึงหน้าเว็บงานละครั้งเดียวตอนงานปิดแล้ว — หน้าของงานที่ยังเปิดให้ค่ามั่ว"""
+        """ดึงหน้าเว็บงานละครั้งเดียวตอนงานปิดแล้ว — หน้าของงานที่ยังเปิดให้ค่ามั่ว
+
+        ข้ามงาน hireme: เป็นงานที่ยื่นให้คนเดียวโดยตรง หน้าของมันไม่มีรายการบิดให้แกะ
+        (วัดแล้ว 2026-09-24: no-block 1,289 จาก 1,290 ครั้งคืองานกลุ่มนี้)
+        """
         todo = [pid for pid, e in self.state["tracked"].items()
-                if e["closed"] and not e["page"] and e.get("seo")][:self.o.pages_per_cycle]
+                if e["closed"] and not e["page"] and not e.get("hire")
+                and e.get("seo")][:self.o.pages_per_cycle]
         for pid in todo:
             e = self.state["tracked"][pid]
             html = self.net.page(e["seo"])
