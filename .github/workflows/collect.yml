@@ -89,8 +89,14 @@ jobs:
         # จึงต้องบังคับให้ job แดงเพื่อให้ GitHub ส่งเมลเอง — โทเคนหมดอายุทั้งสองใบถูกจับด้วย
         # กลไกนี้ ไม่ใช่ด้วยการตั้งอายุยาว
         run: |
+          # push ระหว่างทางที่ล้มแต่ push ตอนจบผ่าน = ข้อมูลก้อนนั้นขึ้นไปครบแล้ว เป็นการสะดุดชั่วคราว
+          # ของ GitHub จึงแค่เตือน ส่วนกุญแจที่พังจริงทำให้ push ตอนจบล้มด้วย ขั้นนั้นแดงเองอยู่แล้ว
+          # และแฟ้ม final-push-ok จะไม่เกิด ขั้นนี้จึงแดงตามด้วย
           failed=0
-          if [ -f "$RUNNER_TEMP/push-failed" ]; then
+          if [ -f "$RUNNER_TEMP/push-failed" ] && [ -f "$RUNNER_TEMP/final-push-ok" ]; then
+            echo "::warning::push ระหว่างทางเคยล้ม แต่ push ตอนจบพาข้อมูลที่ค้างขึ้นไปครบแล้ว — ดูรายละเอียดด้านล่าง"
+            cat "$RUNNER_TEMP/push-failed"
+          elif [ -f "$RUNNER_TEMP/push-failed" ]; then
             echo "::error::push ระหว่างทางล้มเหลว — ดูรายละเอียดด้านล่าง"
             cat "$RUNNER_TEMP/push-failed"
             failed=1

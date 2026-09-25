@@ -24,10 +24,16 @@ sleep 1
 git -C "$DATA" add -A
 if ! git -C "$DATA" diff --cached --quiet; then
   git -C "$DATA" commit -qm "data $(date -u '+%Y-%m-%d %H:%M') UTC (ปิดท้าย)"
+fi
+# push เสมอแม้ไม่มีอะไรใหม่ให้ commit — commit ของตัวไล่ push ที่ push ไม่ผ่านยังค้างอยู่ในโคลน
+# และนี่คือโอกาสสุดท้ายที่จะพามันขึ้นไป ถ้าไม่มีอะไรค้าง git ตอบว่าตรงกันอยู่แล้วและไม่ทำอะไร
+if git -C "$DATA" rev-parse -q --verify HEAD >/dev/null; then
   push "$DATA" main
+  # ขั้นตรวจถัดไปใช้แฟ้มนี้แยกว่า push ระหว่างทางที่เคยล้ม ถูกตามเก็บครบแล้วหรือยัง
+  touch "$RUNNER_TEMP/final-push-ok"
   echo "ดันสายข้อมูลรอบสุดท้ายแล้ว"
 else
-  echo "ไม่มีสายข้อมูลใหม่ค้างอยู่"
+  echo "ยังไม่มีสายข้อมูลเลย"
 fi
 
 if [ -f "$DATA/state.json.gz" ]; then
