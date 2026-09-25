@@ -22,7 +22,8 @@ import argparse, json, os, re, signal, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fmnet import Net, Blocked          # noqa: E402
-from store import Store, StateMissing   # noqa: E402
+from store import Store, StateMissing, StateStale   # noqa: E402
+from rebuild_state import rebuild       # noqa: E402
 
 HOUR = 3600
 DAY = 86400
@@ -48,6 +49,7 @@ class Collector:
         self.cats = None
         self.users = {}                  # ชื่อผู้ใช้ -> ID ตัวเลข เก็บไว้ในหน่วยความจำรอบการรันนี้
         self.stop = False
+        self.rebuilt = None
 
     # ---------- การรับงานเข้าและการอ่านความเปลี่ยนแปลง ----------
 
@@ -331,6 +333,8 @@ class Collector:
         self.net.reset_counters()
         run = {"tick": tick_no, "listings": 0, "diffs": 0, "bids": 0,
                "outcomes": 0, "pages": 0, "gone": 0, "phases": []}
+        if self.rebuilt:                           # จดไว้ที่รอบแรกหลังกู้ ให้คนวิเคราะห์หาช่วงนั้นเจอ
+            run["state_rebuilt"], self.rebuilt = self.rebuilt, None
         try:
             run["phases"].append("discover")
             self.discover(run)
@@ -373,6 +377,8 @@ class Collector:
         # บันทึกการรันต้องมีทุกรอบไม่มีข้อยกเว้น — ไม่มีแถว = ไม่มีอะไรเปลี่ยน จะจริงก็ต่อเมื่อรู้ว่ารันสำเร็จ
         self.store.write("runs", run)
         self.store.flush()
+        # คู่กับบันทึกการรันแถวนี้ — job ถัดไปใช้เทียบว่าสถานะที่ได้กลับมาล้ากว่าข้อมูลหรือไม่
+        self.state["saved_t"] = run["t"]
         self.store.save_state(self.state)
         return run
 
@@ -430,6 +436,17 @@ def main():
         # จบด้วยรหัสผิดพลาดแล้วรอคน ดีกว่าเริ่มนับหนึ่งใหม่เงียบ ๆ
         print(f"ตัวเก็บไม่เริ่ม: {e}", file=sys.stderr)
         return 2
+    except StateStale as e:
+        # กู้เองแทนการรอคน: สถานะที่กู้จากสายข้อมูลใกล้ความจริงกว่าสถานะที่ล้าเสมอ
+        # ส่วนการหยุดรอคนทำให้เส้นเวลาของบิดขาดไปตลอดช่วงที่รอ ซึ่งกู้กลับไม่ได้เลย
+        state, rep = rebuild(o.data_dir)
+        store.save_state(state)
+        print(f"::warning::สถานะล้ากว่าสายข้อมูล กู้ใหม่จากสายข้อมูลแล้ว — {e}", flush=True)
+        for d in rep["damage"]:
+            print(f"::warning::ระหว่างกู้สถานะ: {d}", flush=True)
+        c = Collector(net, store, o)
+        c.rebuilt = {"saved_t": e.saved_t, "last_run_t": e.last_run_t,
+                     "damage": len(rep["damage"])}
     if o.once:
         c.state["next_slow"] = c.state["next_sweep"] = 0   # รอบทดสอบต้องเดินครบทุกขา
     for sig in (signal.SIGINT, signal.SIGTERM):

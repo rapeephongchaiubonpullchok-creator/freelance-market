@@ -51,6 +51,21 @@ class StateMissing(Exception):
     """ไฟล์สถานะหาย ทั้งที่สายข้อมูลมีร่องรอยว่าเคยเก็บที่นี่มาก่อน"""
 
 
+class StateStale(Exception):
+    """ไฟล์สถานะเก่ากว่าสายข้อมูล — มีรอบที่เดินไปแล้วแต่สถานะของมันไม่ได้กลับมาด้วย"""
+
+    def __init__(self, saved_t, last_run_t):
+        self.saved_t, self.last_run_t = saved_t, last_run_t
+        hm = lambda t: time.strftime("%m-%d %H:%M UTC", time.gmtime(t))   # noqa: E731
+        super().__init__(f"สถานะบันทึกล่าสุด {hm(saved_t)} แต่บันทึกการรันล่าสุด {hm(last_run_t)} "
+                         f"— ล้าไป {(last_run_t - saved_t) / 3600:.1f} ชม.")
+
+
+# ช่วงที่ยอมให้สถานะช้ากว่าบันทึกการรัน: แต่ละรอบเขียนบันทึกก่อนแล้วค่อยเขียนสถานะ ถูกฆ่าตรงกลาง
+# จึงช้าได้หนึ่งรอบโดยไม่มีอะไรผิด เกินห้ารอบแปลว่าสถานะมาจาก job ก่อนหน้า
+STALE_AFTER = 600
+
+
 class Store:
     def __init__(self, root):
         self.root = os.path.abspath(root)
@@ -102,11 +117,25 @@ class Store:
                     return True
         return False
 
+    def last_run_t(self):
+        """เวลาของบันทึกการรันแถวล่าสุดในที่เก็บ — None ถ้ายังไม่มี"""
+        for d in sorted(os.listdir(self.root), reverse=True):
+            p = os.path.join(self.root, d, "runs.jsonl.gz")
+            if os.path.exists(p):
+                ts = [r.get("t") or 0 for r in read_rows(p)]
+                if ts:
+                    return max(ts)
+        return None
+
     def load_state(self):
         """สถานะหายพร้อมกับที่เก็บว่างเปล่า = เริ่มต้นใหม่ · หายทั้งที่มีข้อมูลอยู่ = ต้องรอคน
 
         อย่างหลังคือทางเดียวที่ข้อมูลจะหายแบบไม่มีร่องรอย: ตัวเก็บจะนับ ID หนึ่งใหม่
         ทิ้งงานที่ยังตามผลปลายทางค้างอยู่ทั้งกอง แล้วเดินต่อเหมือนไม่มีอะไรเกิดขึ้น
+
+        สถานะที่มีอยู่แต่เก่ากว่าบันทึกการรัน (push สถานะตอนจบ job ล้มแต่ push ข้อมูลผ่าน)
+        โยน `StateStale` — ถ้าเดินต่อจากมัน งานที่เห็นไปแล้วในช่วงที่ขาดจะถูกบันทึกซ้ำทุกสาย
+        สถานะรุ่นเก่าที่ยังไม่มี `saved_t` ตรวจไม่ได้ จึงปล่อยผ่าน
         """
         p = self.state_path()
         if not os.path.exists(p):
@@ -117,7 +146,11 @@ class Store:
                     "ให้สร้างสถานะกลับจากสายข้อมูล หรือย้ายที่เก็บเดิมออกไปก่อนถ้าตั้งใจเริ่มใหม่จริง")
             return {"version": 1, "max_id": 0, "tracked": {}, "done": {}, "absent": {}}
         with gzip.open(p, "rt", encoding="utf-8") as f:
-            return json.load(f)
+            state = json.load(f)
+        saved, last = state.get("saved_t"), self.last_run_t()
+        if saved and last and last - saved > STALE_AFTER:
+            raise StateStale(saved, last)
+        return state
 
     def save_state(self, state):
         """เขียนลงไฟล์ชั่วคราวแล้วค่อยสลับชื่อ — ถูกฆ่ากลางคันแล้วสถานะเดิมต้องยังอ่านได้"""
