@@ -96,12 +96,22 @@ def main():
               f"{dur(j[-1]['t'] - j[0]['t']):>10} {len(j):>6}  {mark}")
 
     # --- ช่องว่างของจังหวะ 2 นาที: ทั้งในตัว job เองและระหว่าง job ---
+    # วัดจากต้นรอบถึงต้นรอบ ไม่ใช่ `t` ถึง `t` — `t` ของแถว runs ถูกเขียนตอนรอบ *จบ*
+    # ส่วนงานอายุน้อยถูกยิงถามตอนต้นรอบ วัดจาก `t` จะเห็นรอบหนักที่ยาว 110 วิ
+    # เป็นรู 4 นาทีทั้งที่รอบถัดไปเริ่มตรงเวลา
+    # และรอบหนักแทรกการยิงงานอายุน้อยไว้กลางรอบได้ (`fresh_at` วินาทีนับจากต้นรอบ)
+    # จึงวัดบนเส้นเวลาของทุกครั้งที่ยิงจริง ไม่ใช่ทีละแถว
+    polls = []                                   # (เวลา, เป็นครั้งแรกของ job หรือไม่)
+    for r in rows:
+        s0 = r["t"] - (r.get("secs") or 0)
+        polls.append((s0, r.get("tick", 0) == 1))
+        polls += [(s0 + x, False) for x in r.get("fresh_at") or []]
     holes = []
-    for a, b in zip(rows, rows[1:]):
-        d = b["t"] - a["t"]
+    for (a, _), (b, new_job) in zip(polls, polls[1:]):
+        d = b - a
         if d > o.tick * o.slack:
-            kind = "ระหว่าง job" if b.get("tick", 0) == 1 else "ในตัว job เอง"
-            holes.append((a["t"], d, kind))
+            kind = "ระหว่าง job" if new_job else "ในตัว job เอง"
+            holes.append((a, d, kind))
 
     print(f"\nช่องว่างของจังหวะ 2 นาที — พบ {len(holes)} ช่อง")
     if holes:
