@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """ไล่สาย `runs` แล้วบอกว่าตัวเก็บขาดช่วงตรงไหนบ้าง และขาดผิดจากแผนข้อไหน
 
-แผนมีสามจังหวะ และแต่ละจังหวะขาดแล้วเสียของคนละอย่าง:
+แผนมีสี่จังหวะ และแต่ละจังหวะขาดแล้วเสียของคนละอย่าง:
 
-  ทุก 2 นาที   ฟีดหน้าแรก + งานอายุน้อย — ขาดแล้วเสีย *เส้นเวลาของบิด* กู้ไม่ได้
+  ทุก 15 วิ    ตรวจตารางงานอายุน้อย (--young ของ collect.py) — ขาดแล้วเสีย *บิดรายคน* กู้ไม่ได้
+  ทุก 2 นาที   ฟีดหน้าแรก — ขาดแล้วงานใหม่ถูกเห็นช้า บิดก่อนเห็นงานถอดรายคนไม่ได้
   ทุก 2 ชม.    งานเปิดค้างทั้งหมด + กวาดช่วง ID + ผลปลายทาง + หน้าเว็บ
   ทุก 6 ชม.    กวาดฟีดทีละหมวดทั้ง 17 หมวด
 
@@ -54,7 +55,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", required=True)
-    ap.add_argument("--tick", type=float, default=120, help="จังหวะเร็วตามแผน (วินาที)")
+    ap.add_argument("--tick", type=float, default=120, help="จังหวะฟีดตามแผน (วินาที)")
+    ap.add_argument("--step", type=float, default=15, help="จังหวะตรวจงานอายุน้อยตามแผน (วินาที)")
     ap.add_argument("--slow", type=float, default=2 * HOUR, help="จังหวะช้าตามแผน (วินาที)")
     ap.add_argument("--sweep", type=float, default=6 * HOUR, help="จังหวะกวาดหมวดตามแผน (วินาที)")
     ap.add_argument("--slack", type=float, default=1.5,
@@ -94,6 +96,26 @@ def main():
         mark = "ครบทุกเฟส" if "sweep-categories" in first else " ".join(first[:3]) + " …"
         print(f"  {ts(j[0]['t']):>12} {ts(j[-1]['t']):>12} "
               f"{dur(j[-1]['t'] - j[0]['t']):>10} {len(j):>6}  {mark}")
+
+    # --- ช่องว่างของจังหวะ 15 วิ: `young_t` จดทุกครั้งที่ตรวจตาราง มีเฉพาะแถวตั้งแต่ 2026-09-26 ---
+    # ช่องระหว่าง job ไม่นับซ้ำตรงนี้ หัวข้อ 2 นาทีด้านล่างรายงานไว้แล้วพร้อมผลที่ตามมา
+    checks = []
+    for r in rows:
+        yt = r.get("young_t") or []
+        checks += [(t, i == 0 and r.get("tick", 0) == 1) for i, t in enumerate(yt)]
+    checks.sort()
+    print(f"\nช่องว่างของจังหวะ {dur(o.step)} (งานอายุน้อย)", end="")
+    if len(checks) < 2:
+        print(" · ยังไม่มีข้อมูล แถวก่อน 2026-09-26 ไม่ได้จด `young_t`")
+    else:
+        yh = [(a, b - a) for (a, _), (b, new_job) in zip(checks, checks[1:])
+              if b - a > o.step * o.slack and not new_job]
+        cover = checks[-1][0] - checks[0][0]
+        ylost = sum(d for _, d in yh)
+        print(f" — พบ {len(yh)} ช่องในตัว job เอง จาก {len(checks)} ครั้งที่ตรวจ ตลอด {dur(cover)}")
+        print(f"  รวมเวลาที่ขาด {dur(ylost)} = {100 * ylost / max(cover, 1):.2f}%")
+        for t, d in sorted(yh, key=lambda x: -x[1])[:10]:
+            print(f"  {ts(t):>12} {dur(d):>10}")
 
     # --- ช่องว่างของจังหวะ 2 นาที: ทั้งในตัว job เองและระหว่าง job ---
     # วัดจากต้นรอบถึงต้นรอบ ไม่ใช่ `t` ถึง `t` — `t` ของแถว runs ถูกเขียนตอนรอบ *จบ*

@@ -4,11 +4,13 @@
 วนลูปอยู่ในโปรเซสเดียว เพราะ `schedule:` ของ GitHub Actions ต่ำสุด 5 นาทีและถูกข้ามเมื่อโหลดสูง
 ในหนึ่งรอบ (ค่าตั้งต้น 2 นาที) จะทำสิ่งที่ถูกที่สุดก่อน แล้วค่อยทำของแพงตามจังหวะของมันเอง:
 
-  ทุกรอบ      ฟีดหน้าแรก (ค้นพบงานใหม่) + ยิงถามงานอายุน้อยกว่า 6 ชม.
-  ทุก 2 ชม.   ยิงถามงานที่เปิดค้างทั้งหมด + กวาดช่วง ID ย้อนหลัง + ตามผลปลายทางที่ถึงกำหนด
+  ทุกรอบ      ฟีดหน้าแรก (ค้นพบงานใหม่)
+  ตามอายุงาน  ยิงถามงานอายุน้อยกว่า 24 ชม. ถี่ตามอายุ (ดู --young) ห่างสุด 15 วิสำหรับงานไม่ถึง 20 นาที
+  ทุก 2 ชม.   ยิงถามงานที่เปิดค้างที่เหลือ + กวาดช่วง ID ย้อนหลัง + ตามผลปลายทางที่ถึงกำหนด
   ทุก 6 ชม.   กวาดฟีดทีละหมวดทั้ง 17 หมวดจนถึงก้น
 
-รอบที่มีขาแพงยาวเกิน 2 นาทีได้ จึงแทรกของถูกเข้าไปคั่นระหว่างขาแพงเมื่อถึงเวลา (ดู keep_pace)
+ขาแพงยาวเกิน 2 นาทีได้ จึงแทรกของถูกเข้าไปคั่นทุกก้อนย่อยเมื่อถึงเวลา (ดู pace)
+ช่วงรอระหว่างรอบก็ยิงงานอายุน้อยต่อ ไม่ได้นอนเฉย ๆ
 
 กำหนดเวลาของสองจังหวะช้าถูกจำลงไฟล์สถานะเป็นเวลานาฬิกาจริง ไม่ใช่นับจากตอนโปรเซสเริ่ม —
 ไม่งั้น job ที่ถูกยามปลุกซ้ำถี่ ๆ จะเดินขาแพงทุกขาทันทีที่เริ่ม ทุกครั้งที่เริ่ม
@@ -29,12 +31,25 @@ from rebuild_state import rebuild       # noqa: E402
 
 HOUR = 3600
 DAY = 86400
+GONE_AFTER = 240     # จังหวะเดิม 2 นาที หายสามรอบกินเวลาอย่างน้อย 4 นาที คงเส้นนี้ไว้
 BIDS_RE = re.compile(r'"bids"\s*:\s*\[')
 LOGO_RE = re.compile(r"/logo/(\d+)/")
 
 
 def now():
     return int(time.time())
+
+
+def parse_young(spec):
+    """"20m:15,1h:60" -> [(1200, 15), (3600, 60)] · หน่วยอายุคือ m หรือ h"""
+    out = []
+    for part in spec.split(","):
+        age, sec = part.strip().split(":")
+        mult = {"m": 60, "h": HOUR}[age[-1]]
+        out.append((float(age[:-1]) * mult, float(sec)))
+    if out != sorted(out) or not out:
+        raise ValueError(f"--young ต้องเรียงจากอายุน้อยไปมาก: {spec}")
+    return out
 
 
 class Collector:
@@ -52,7 +67,16 @@ class Collector:
         self.users = {}                  # ชื่อผู้ใช้ -> ID ตัวเลข เก็บไว้ในหน่วยความจำรอบการรันนี้
         self.stop = False
         self.rebuilt = None
-        self.last_fresh = 0.0            # เวลาที่ยิงถามงานอายุน้อยครั้งล่าสุด — ตัวกำหนดจังหวะ 2 นาที
+        self.last_feed = 0.0             # เวลาที่ดึงฟีดหน้าแรกครั้งล่าสุด — ตัวกำหนดจังหวะ 2 นาที
+        self.t0 = 0.0
+        # ตารางจังหวะของงานอายุน้อย [(อายุไม่เกินกี่วิ, ยิงทุกกี่วิ)] เรียงจากอายุน้อยไปมาก
+        self.young = parse_young(o.young)
+        self.step = self.young[0][1]     # จังหวะที่ถี่ที่สุด = ความถี่ที่ pace ตรวจว่ามีอะไรถึงเวลา
+        self.last_check = 0.0
+        self.pacing = False
+        # สองอย่างนี้อยู่ในหน่วยความจำเท่านั้น หลังรีสตาร์ตงานอายุน้อยทุกงานถูกยิงถามทันทีหนึ่งครั้ง
+        self.asked = {}                  # pid -> เวลาที่ถามหรือเห็นล่าสุด
+        self.first_miss = {}             # pid -> เวลาที่เริ่มหายจาก endpoint
 
     # ---------- การรับงานเข้าและการอ่านความเปลี่ยนแปลง ----------
 
@@ -70,6 +94,7 @@ class Collector:
                 pass                     # ตามผลปลายทางจบไปแล้ว ไม่รับกลับเข้ามาอีก
             else:
                 bs = p.get("bid_stats") or {}
+                self.asked[pid] = time.time()
                 self.store.write("listings", {"id": p["id"], "src": source, "p": p})
                 run["listings"] += 1
                 self.state["tracked"][pid] = {
@@ -85,6 +110,8 @@ class Collector:
         pid = str(p["id"])
         e = self.state["tracked"][pid]
         e["miss"] = 0
+        self.asked[pid] = time.time()
+        self.first_miss.pop(pid, None)
         bs = p.get("bid_stats") or {}
         n2, avg2 = bs.get("bid_count") or 0, bs.get("bid_avg")
         n1, avg1 = e["n"], e["avg"]
@@ -132,35 +159,47 @@ class Collector:
 
     # ---------- ขาเก็บแต่ละขา ----------
 
+    def by_ids(self, ids, run, details=False):
+        """ยิงถามทีละก้อน 60 ID แล้วคืนผลทีละก้อน — ผู้เรียกต้องบันทึกผลก้อนหนึ่งให้เสร็จก่อนขอก้อนถัดไป
+        pace ถูกเรียกคั่นระหว่างก้อนตรงนี้ ถ้าเอาผลทุกก้อนมารวมแล้วค่อยบันทึก งานอายุน้อยที่ pace
+        เพิ่งอ่านค่าใหม่ไปจะถูกค่าเก่าจากก้อนต้น ๆ ทับ กลายเป็นการถอนบิดปลอมตามด้วยบิดเข้าปลอม"""
+        ids = list(ids)
+        for i in range(0, len(ids), 60):
+            if i:
+                self.pace(run)
+            yield ids[i:i + 60], self.net.by_ids(ids[i:i + 60], details=details)
+
     def poll(self, ids, run, details=False):
-        ids = [int(i) for i in ids]
-        if not ids:
-            return
-        got = self.net.by_ids(ids, details=details)
-        seen = set()
-        for p in got:
-            seen.add(int(p["id"]))
-            if str(p["id"]) in self.state["tracked"]:
-                self.observe(p, run)
-            else:
-                self.ingest([p], "id-query", run)
-        for i in ids:
-            if i in seen:
-                continue
-            e = self.state["tracked"].get(str(i))
-            if e is None:
-                continue
-            e["miss"] = e.get("miss", 0) + 1
-            if e["miss"] >= 3 and not e["closed"]:
+        for chunk, got in self.by_ids([int(i) for i in ids], run, details):
+            t = time.time()
+            seen = set()
+            for p in got:
+                seen.add(int(p["id"]))
+                if str(p["id"]) in self.state["tracked"]:
+                    self.observe(p, run)
+                else:
+                    self.ingest([p], "id-query", run)
+            for i in chunk:
+                if i in seen:
+                    continue
+                k = str(i)
+                e = self.state["tracked"].get(k)
+                if e is None:
+                    continue
+                self.asked[k] = t
+                e["miss"] = e.get("miss", 0) + 1
+                first = self.first_miss.setdefault(k, t)
                 # หายจาก endpoint ไปสามรอบ = หายจริง ไม่ใช่จังหวะพลาด แต่ไม่รู้ว่าปิดแบบไหน
-                self.close(str(i), {"status": "gone", "sub_status": None}, run)
-                run["gone"] += 1
+                # และต้องหายนานพอด้วย งานอายุน้อยถูกถามทุก 15 วิ สามรอบจึงสั้นแค่ 30 วิ
+                if e["miss"] >= 3 and t - first >= GONE_AFTER and not e["closed"]:
+                    self.close(k, {"status": "gone", "sub_status": None}, run)
+                    run["gone"] += 1
 
     def discover(self, run):
         ps = self.net.feed(limit=100)
         before = len(self.state["tracked"])
         self.ingest(ps, "feed", run)
-        # รอบหนักดึงฟีดได้หลายครั้ง (ดู keep_pace) จึงสะสม ไม่ใช่เขียนทับ
+        # รอบหนักดึงฟีดได้หลายครั้ง (ดู pace) จึงสะสม ไม่ใช่เขียนทับ
         run["feed_seen"] = run.get("feed_seen", 0) + len(ps)
         run["feed_new"] = run.get("feed_new", 0) + len(self.state["tracked"]) - before
 
@@ -170,9 +209,9 @@ class Collector:
             self.cats = self.net.categories() or {}
         pages = 0
         for cid in sorted(self.cats):
-            self.keep_pace(run)
             prev = None
             for off in range(0, 5000, 100):
+                self.pace(run)
                 ps = self.net.feed(limit=100, offset=off, category=cid)
                 pages += 1
                 ids = {p.get("id") for p in ps}
@@ -207,9 +246,10 @@ class Collector:
         if not ask:
             run["id_sweep"] = {"lo": lo, "hi": hi, "asked": 0, "found": 0, "absent": 0}
             return
-        got = self.net.by_ids(ask, details=True)
-        found = {int(p["id"]) for p in got}
-        self.ingest(got, "id-sweep", run)
+        found = set()
+        for _, got in self.by_ids(ask, run, details=True):
+            found |= {int(p["id"]) for p in got}
+            self.ingest(got, "id-sweep", run)
         missing = [i for i in ask if i not in found]
         fresh = [i for i in missing if str(i) not in absent]
         for i in missing:
@@ -225,7 +265,9 @@ class Collector:
                if e["due"] and e["due"][0] <= now()]
         if not due:
             return
-        got = {int(p["id"]): p for p in self.net.by_ids([int(x) for x in due])}
+        got = {}
+        for _, ps in self.by_ids([int(x) for x in due], run):
+            got.update({int(p["id"]): p for p in ps})    # งานที่ปิดแล้วไม่ถูก pace ถามซ้ำ รวมก้อนได้
         for pid in due:
             e = self.state["tracked"][pid]
             p = got.get(int(pid))
@@ -283,6 +325,7 @@ class Collector:
                 if e["closed"] and not e["page"] and not e.get("hire")
                 and e.get("seo")][:self.o.pages_per_cycle]
         for pid in todo:
+            self.pace(run)
             e = self.state["tracked"][pid]
             html = self.net.page(e["seo"])
             e["page"] = 1                                  # ยิงครั้งเดียวไม่ว่าจะได้อะไรกลับมา
@@ -333,56 +376,85 @@ class Collector:
         self.state["done"] = {k: v for k, v in self.state["done"].items() if int(k) >= cut_done}
         self.state["absent"] = {k: v for k, v in self.state["absent"].items() if v >= cut_absent}
 
-    def fresh(self, run):
-        """ของถูกของทุกรอบ: ฟีดหน้าแรก + งานอายุน้อย"""
-        self.last_fresh = time.time()
-        run["phases"].append("discover")
-        self.discover(run)
-        cutoff = now() - self.o.fresh_hours * HOUR
-        fresh = [pid for pid, e in self.state["tracked"].items()
-                 if not e["closed"] and (e["t"] or 0) >= cutoff]
-        run["fresh"] = len(fresh)
-        run["phases"].append("poll-fresh")
-        self.poll(fresh, run)
+    def every(self, age):
+        """งานอายุเท่านี้ต้องถูกยิงถามทุกกี่วินาที — None คือเลยตารางไปแล้ว ปล่อยให้รอบ 2 ชม. ดูแล"""
+        for upto, sec in self.young:
+            if age < upto:
+                return sec
+        return None
 
-    def keep_pace(self, run):
-        """เรียกคั่นระหว่างขาแพง — รอบหนักยาวเกิน 2 นาทีได้ (กวาดหมวดค่ากลาง ~170 วิ)
-        แต่เส้นเวลาของบิดงานอายุน้อยต้องไม่ขาดตาม จึงแทรกของถูกเข้าไปกลางรอบเมื่อถึงเวลา
-        `fresh_at` จดวินาทีนับจากต้นรอบไว้ให้ gaps.py วัดรูจากครั้งล่าสุดที่ยิงจริง"""
-        if time.time() - self.last_fresh < self.o.tick:
+    def pace(self, run, feed=True):
+        """ของถูก: ฟีดหน้าแรกเมื่อครบ 2 นาที + งานอายุน้อยที่ถึงเวลาตามตาราง --young
+
+        เรียกได้บ่อยเท่าไหร่ก็ได้ เพราะมันยิงเฉพาะเมื่อมีอะไรถึงเวลา ถูกเรียกต้นรอบ คั่นทุกก้อนของขาแพง
+        และตลอดช่วงรอระหว่างรอบ `fresh_at` จดวินาทีนับจากต้นรอบของฟีดที่แทรกกลางรอบ ส่วน
+        `young_t` จดทุกครั้งที่ตรวจตาราง (แม้ไม่มีงานไหนถึงเวลา) ให้ gaps.py วัดรูของแต่ละจังหวะ"""
+        if self.pacing:                  # poll ของงานอายุน้อยเรียก pace คั่นก้อนเองด้วย
             return
-        run.setdefault("fresh_at", []).append(round(time.time() - self.t0, 1))
-        self.fresh(run)
+        self.pacing = True
+        try:
+            t = time.time()
+            if feed and t - self.last_feed >= self.o.tick:
+                if t - self.t0 > 1:
+                    run.setdefault("fresh_at", []).append(round(t - self.t0, 1))
+                self.last_feed = t
+                run["phases"].append("discover")
+                self.discover(run)
+            t = time.time()
+            if t - self.last_check < self.step:
+                return
+            self.last_check = t
+            run["young_t"].append(int(t))
+            due = []
+            for pid, e in self.state["tracked"].items():
+                if e["closed"]:
+                    continue
+                sec = self.every(t - (e["t"] or 0))
+                # เผื่อหนึ่งในสี่ของจังหวะ เวลาที่ถามถูกจดหลังรีเควสต์กลับ ช้ากว่าเวลาตรวจราวครึ่งวิ
+                # ไม่เผื่อ งานกลุ่ม 15 วิจะถูกถามทุก 30 วิ
+                if sec is not None and t - self.asked.get(pid, 0) >= sec - self.step / 4:
+                    due.append(pid)
+            run["young"] += len(due)
+            self.poll(due, run)
+        finally:
+            self.pacing = False
 
-    def tick(self, tick_no):
-        t0 = self.t0 = time.time()
+    def new_run(self):
+        """แถวบันทึกการรันหนึ่งแถวครอบช่วงรอก่อนรอบ + ตัวรอบเอง ตัวนับเน็ตจึงเริ่มตรงนี้"""
         self.net.reset_counters()
-        run = {"tick": tick_no, "listings": 0, "diffs": 0, "bids": 0,
-               "outcomes": 0, "pages": 0, "gone": 0, "phases": []}
+        return {"listings": 0, "diffs": 0, "bids": 0, "outcomes": 0, "pages": 0,
+                "gone": 0, "young": 0, "young_t": [], "phases": []}
+
+    def tick(self, tick_no, run):
+        t0 = self.t0 = time.time()
+        run["tick"] = tick_no
         if self.rebuilt:                           # จดไว้ที่รอบแรกหลังกู้ ให้คนวิเคราะห์หาช่วงนั้นเจอ
             run["state_rebuilt"], self.rebuilt = self.rebuilt, None
         try:
-            self.fresh(run)
+            self.last_feed = 0                     # ต้นรอบดึงฟีดเสมอ gaps.py ใช้ต้นรอบเป็นหมุดของจังหวะ 2 นาที
+            self.pace(run)
 
             if now() >= self.state["next_slow"]:
                 self.state["next_slow"] = now() + self.o.slow
                 run["phases"].append("poll-all")
-                openp = [pid for pid, e in self.state["tracked"].items() if not e["closed"]]
+                # งานที่ยังอยู่ในตาราง --young ถูก pace ดูแลถี่กว่านี้อยู่แล้ว
+                openp = [pid for pid, e in self.state["tracked"].items()
+                         if not e["closed"] and self.every(time.time() - (e["t"] or 0)) is None]
                 run["open"] = len(openp)
                 self.poll(openp, run)
+                self.pace(run)
                 run["phases"].append("id-sweep")
                 self.sweep_ids(run)
-                self.keep_pace(run)
+                self.pace(run)
                 run["phases"].append("outcomes")
                 self.outcomes_due(run)
-                self.keep_pace(run)
+                self.pace(run)
                 run["phases"].append("pages")
                 self.fetch_pages(run)
-                self.keep_pace(run)
+                self.pace(run)
                 self.prune()
 
             if now() >= self.state["next_sweep"]:
-                self.keep_pace(run)
                 self.state["next_sweep"] = now() + self.o.sweep
                 run["phases"].append("sweep-categories")
                 self.sweep_categories(run)
@@ -394,6 +466,8 @@ class Collector:
         run["tracked"] = len(self.state["tracked"])
         run["tracked_open"] = sum(1 for e in self.state["tracked"].values() if not e["closed"])
         run["done"] = len(self.state["done"])
+        run["young_open"] = sum(1 for e in self.state["tracked"].values()
+                                if not e["closed"] and self.every(time.time() - (e["t"] or 0)) is not None)
         run["net"] = self.net.counters()
         run["secs"] = round(time.time() - t0, 2)
         # บันทึกการรันต้องมีทุกรอบไม่มีข้อยกเว้น — ไม่มีแถว = ไม่มีอะไรเปลี่ยน จะจริงก็ต่อเมื่อรู้ว่ารันสำเร็จ
@@ -404,15 +478,33 @@ class Collector:
         self.store.save_state(self.state)
         return run
 
+    def wait(self, run, t_end):
+        """รอถึงรอบถัดไป — นับจากฟีดครั้งล่าสุด ไม่ใช่จากต้นรอบ เพราะรอบหนักอาจแทรกฟีดไว้กลางรอบแล้ว
+        ระหว่างรอยังยิงงานอายุน้อยตามตาราง ผลของช่วงนี้ถูกนับรวมเข้าแถวของรอบถัดไป"""
+        while not self.stop:
+            left = self.o.tick - (time.time() - self.last_feed)
+            if left <= 0 or (t_end and time.time() >= t_end):
+                return
+            try:
+                self.pace(run, feed=False)
+            except Blocked as e:
+                run["blocked"] = str(e)            # รอบถัดไปจะเจอเองแล้วพักตามปกติ
+                return
+            except Exception as e:                 # เหมือนใน tick: พังครั้งเดียวต้องไม่ทำให้ตัวเก็บตาย
+                run["error"] = f"{type(e).__name__}: {e}"
+            nxt = self.last_check + self.step
+            time.sleep(max(0.05, min(left, nxt - time.time())))
+
     def loop(self):
         # ปิดที่เก็บให้ได้ทุกทางออก — ก้อน gzip ที่ไม่ถูกปิดจะไม่มีท้ายสตรีมถาวร
         # ไม่ใช่แค่ชั่วคราวจนถึงรอบหน้า เพราะไฟล์วันนั้นจะไม่ถูกเปิดต่อท้ายอีกแล้ว
         try:
             t_end = time.time() + self.o.max_seconds if self.o.max_seconds else None
             i = 0
+            run = self.new_run()
             while not self.stop:
                 i += 1
-                r = self.tick(i)
+                r = self.tick(i, run)
                 print(f"[{time.strftime('%H:%M:%S')}] รอบ {i} {r['secs']}s "
                       f"ยิง {r['net']['requests']} ประกาศใหม่ {r['listings']} ส่วนต่าง {r['diffs']} "
                       f"บิด {r['bids']} ปลายทาง {r['outcomes']} หน้าเว็บ {r['pages']} "
@@ -425,8 +517,8 @@ class Collector:
                     time.sleep(600)
                 if t_end and time.time() >= t_end:
                     break
-                # นับจากครั้งล่าสุดที่ยิงงานอายุน้อย ไม่ใช่จากต้นรอบ — รอบหนักอาจแทรกไว้กลางรอบแล้ว
-                time.sleep(max(0, self.o.tick - (time.time() - self.last_fresh)))
+                run = self.new_run()
+                self.wait(run, t_end)
         finally:
             self.store.close()
 
@@ -439,7 +531,10 @@ def main():
     ap.add_argument("--tick", type=float, default=120, help="วินาทีต่อรอบ (ค่าตั้งต้น 120)")
     ap.add_argument("--slow", type=float, default=2 * HOUR, help="จังหวะยิงงานเปิดค้างทั้งหมด")
     ap.add_argument("--sweep", type=float, default=6 * HOUR, help="จังหวะกวาดทีละหมวด")
-    ap.add_argument("--fresh-hours", type=float, default=6, help="นิยามของ 'งานอายุน้อย'")
+    # วัดจากข้อมูลสด 09-11 ถึง 09-26: สองในสามของบิดเข้ามาในชั่วโมงแรก ค่ากลาง 54 บิด/ชม. ใน 10 นาทีแรก
+    # ห่างขึ้นตามอายุเพราะอัตราบิดตกเร็ว ช่วง 6-24 ชม. ที่เคยยิงทุก 2 ชม. ถอดรายคนได้แค่ 11-23%
+    ap.add_argument("--young", default="20m:15,45m:30,1h:60,6h:120,24h:1200",
+                    help="ตารางจังหวะของงานอายุน้อย อายุ:วินาที คั่นด้วยจุลภาค เรียงจากอายุน้อย")
     ap.add_argument("--id-back", type=int, default=600, help="จำนวน ID ที่ถอยกลับทุกครั้งที่กวาด")
     # 140 ต่อรอบหนัก 12 รอบ = 1,680 หน้า/วัน สูงกว่าอัตราที่งานปิดจริง (1,048-1,488/วัน
     # วัดจากข้อมูลสด 09-11 ถึง 09-15) คิวที่ค้างอยู่จึงลดลง ไม่ใช่แค่หยุดโต ซึ่งจำเป็น
